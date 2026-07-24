@@ -1,16 +1,29 @@
 /**
  * ratelimit.js — KV-based sliding-window rate limiter
  *
- * Uses a single KV key per (bucket, identifier) pair.
- * The key stores a JSON array of timestamps (ms) of recent hits.
- * Hits outside the window are pruned on every check.
+ * Concurrency caveat (important, read before relying on this)
+ * ----------------------------------------------------------
+ * Workers KV offers no compare-and-swap, so this is a read-modify-write
+ * cycle: two requests that read the same key at the same instant both see
+ * the pre-write hit list and both write back, losing one hit. A burst of
+ * N truly-parallel requests can therefore exceed `limit`.
  *
- * Usage:
- *   const ok = await rateLimit(env.KV, 'subscribe', ipHash, { limit: 5, windowMs: 60_000 });
- *   if (!ok) return jsonResponse({ ok: false, error: 'Too many requests' }, { status: 429 });
+ * The mitigation below shrinks that window but cannot close it: hits are
+ * stored per-shard under a random shard suffix, so concurrent writers
+ * usually touch different keys instead of clobbering one another, and the
+ * check sums across all shards.
+ *
+ * If you ever need a HARD guarantee (e.g. per-user spend limits, or the
+ * promo-code issuance path becoming valuable enough to farm), move that
+ * specific counter to a Durable Object, which serialises writes per key.
+ * D1 with a UNIQUE constraint is a workable second choice. This module is
+ * deliberately best-effort abuse-dampening, not a correctness primitive.
  *
  * Falls back to `true` (allow) if KV is not bound — never blocks in dev.
  */
+
+/** Number of shards a bucket's hits are spread across. */
+const SHARDS = 4;
 
 /**
  * @param {KVNamespace} kv
@@ -22,29 +35,41 @@
 export async function rateLimit(kv, bucket, id, { limit, windowMs }) {
   if (!kv || !id) return true; // graceful degradation
 
-  const key = `rl:${bucket}:${id}`;
   const now = Date.now();
   const cutoff = now - windowMs;
+  const ttl = Math.max(60, Math.ceil(windowMs / 1000));
+  const baseKey = `rl:${bucket}:${id}`;
 
-  let hits = [];
+  const shardKeys = Array.from({ length: SHARDS }, (_, i) => `${baseKey}:${i}`);
+
+  let shardData;
   try {
-    const raw = await kv.get(key);
-    if (raw) hits = JSON.parse(raw);
+    shardData = await Promise.all(shardKeys.map(k => kv.get(k)));
   } catch {
     return true; // KV read error → allow
   }
 
-  // Prune hits outside the window
-  hits = hits.filter(t => t > cutoff);
+  const parsed = shardData.map(raw => {
+    if (!raw) return [];
+    try {
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr.filter(t => typeof t === "number" && t > cutoff) : [];
+    } catch {
+      return [];
+    }
+  });
 
-  if (hits.length >= limit) return false; // rate-limited
+  const total = parsed.reduce((sum, hits) => sum + hits.length, 0);
+  if (total >= limit) return false; // rate-limited
 
-  hits.push(now);
+  // Record this hit on a randomly chosen shard. Spreading writes means two
+  // concurrent requests are likely to update different keys rather than
+  // overwriting each other's update to a single key.
+  const shard = Math.floor(Math.random() * SHARDS);
+  const updated = [...parsed[shard], now];
 
-  // TTL = window duration in seconds, rounded up
-  const ttl = Math.ceil(windowMs / 1000);
   try {
-    await kv.put(key, JSON.stringify(hits), { expirationTtl: ttl });
+    await kv.put(shardKeys[shard], JSON.stringify(updated), { expirationTtl: ttl });
   } catch {
     // KV write error → allow but don't block
   }
