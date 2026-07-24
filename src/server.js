@@ -4,6 +4,18 @@ import { getCatalogPage, getProductDetail } from "./lib/catalog.js";
 import { htmlResponse, htmlOrMarkdownResponse, xmlResponse, textResponse } from "./lib/response.js";
 import { buildSitemap } from "./lib/sitemap.js";
 import { withSecurityHeaders, withAgentDiscoveryHeaders, generateNonce } from "./lib/security.js";
+import { sanitizeR2Key } from "./lib/uploads.js";
+
+/** Content-types the R2 proxy is willing to serve as-is. Anything else
+ *  (including legacy objects stored before upload validation existed) is
+ *  downgraded to an inert attachment. */
+const SAFE_IMAGE_CONTENT_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+  "image/avif"
+]);
 import { getLocaleFromRequest, localeHeaders } from "./lib/i18n.js";
 import { renderLandingPage } from "./pages/landing.js";
 import { renderCatalogPage } from "./pages/catalog.js";
@@ -356,11 +368,30 @@ async function handleRequestInternal(request, env, ctx) {
 
   // ── R2 image proxy ─────────────────────────────────────────────────────────
   if ((url.pathname.startsWith("/r2/") || url.pathname.startsWith("/cdn/")) && env.PRODUCT_IMAGES) {
-    const r2Key = url.pathname.startsWith("/cdn/") ? url.pathname.slice(5) : url.pathname.slice(4);
+    const rawKey = url.pathname.startsWith("/cdn/") ? url.pathname.slice(5) : url.pathname.slice(4);
+    const r2Key = sanitizeR2Key(rawKey);
+    if (!r2Key) return new Response("Not found", { status: 404 });
+
     const object = await env.PRODUCT_IMAGES.get(r2Key);
     if (!object) return new Response("Not found", { status: 404 });
+
     const headers = new Headers();
     object.writeHttpMetadata(headers);
+
+    // Objects uploaded BEFORE the upload allow-list existed may still carry
+    // a dangerous stored content-type (text/html, image/svg+xml, ...).
+    // writeHttpMetadata() replays it verbatim, so re-assert a safe value
+    // here rather than trusting what is already sitting in the bucket.
+    const stored = (headers.get("content-type") || "").toLowerCase().split(";")[0].trim();
+    if (!SAFE_IMAGE_CONTENT_TYPES.has(stored)) {
+      headers.set("content-type", "application/octet-stream");
+      headers.set("content-disposition", "attachment");
+    }
+
+    // This branch returns a bare Response (not withSecurityHeaders), so the
+    // sniffing guard has to be set explicitly — without it a browser can
+    // ignore the declared type and execute the body.
+    headers.set("x-content-type-options", "nosniff");
     headers.set("cache-control", "public, max-age=31536000, immutable");
     return new Response(object.body, { headers });
   }

@@ -10,6 +10,7 @@ import { listOrders, getOrder, updateOrderStatus } from "./orders.js";
 import { listReviews, moderateReviewRoute } from "./reviews.js";
 import { renderAdminPage } from "../../pages/admin/index.js";
 import { COLLABS } from "../../lib/collabs.js";
+import { validateImageUpload } from "../../lib/uploads.js";
 
 // ── Login / Logout ─────────────────────────────────────────
 
@@ -155,11 +156,14 @@ export async function handleAdminRequest(request, env) {
 
       const form = await request.formData();
       const file = form.get("file");
-      if (!file) return jsonResponse({ ok: false, error: "No file" }, { status: 400 });
 
-      const ext = file.name.split(".").pop().toLowerCase();
-      const key = `collabs/${crypto.randomUUID()}.${ext}`;
-      await bucket.put(key, file.stream(), { httpMetadata: { contentType: file.type } });
+      // Same allow-list as product images — see lib/uploads.js. Never trust
+      // file.type: the /cdn/ proxy serves it back verbatim.
+      const check = validateImageUpload(file);
+      if (!check.ok) return jsonResponse({ ok: false, error: check.error }, { status: check.status });
+
+      const key = `collabs/${crypto.randomUUID()}.${check.ext}`;
+      await bucket.put(key, file.stream(), { httpMetadata: { contentType: check.contentType } });
       return jsonResponse({ ok: true, url: `/cdn/${key}` });
     }
 

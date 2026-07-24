@@ -1,5 +1,6 @@
 import { jsonResponse } from "../../lib/response.js";
 import { sanitizeDescriptionHtml } from "../../lib/rich-text.js";
+import { validateImageUpload } from "../../lib/uploads.js";
 
 function id() { return crypto.randomUUID(); }
 
@@ -247,16 +248,20 @@ export async function uploadImage(env, productId, request) {
 
   const formData = await request.formData();
   const file = formData.get("file");
-  if (!file) return jsonResponse({ ok: false, error: "file required" }, { status: 400 });
 
-  const ext    = file.name.split(".").pop().toLowerCase();
-  const r2Key  = `products/${productId}/${id()}.${ext}`;
+  // Derives BOTH ext and contentType from a fixed allow-list — never from
+  // the attacker-controlled file.type, which the /r2/ proxy would replay
+  // back to visitors as a served Content-Type (stored XSS).
+  const check = validateImageUpload(file);
+  if (!check.ok) return jsonResponse({ ok: false, error: check.error }, { status: check.status });
+
+  const r2Key  = `products/${productId}/${id()}.${check.ext}`;
   const position  = parseInt(formData.get("position") || "0", 10);
   const variantId = formData.get("variant_id") || null;
   const altText   = formData.get("alt_text")   || null;
 
   await env.PRODUCT_IMAGES.put(r2Key, file.stream(), {
-    httpMetadata: { contentType: file.type },
+    httpMetadata: { contentType: check.contentType },
   });
 
   const imageId = id();
