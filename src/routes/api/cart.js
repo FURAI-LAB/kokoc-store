@@ -12,39 +12,48 @@
  */
 
 import { jsonResponse, methodNotAllowedResponse, notFoundResponse } from "../../lib/response.js";
+import { isSameOrigin } from "../../lib/csrf.js";
+import { makeid } from "../../lib/ids.js";
+import {
+  parseCookies,
+  setSessionCookie,
+  SESSION_COOKIE_NAME,
+  SESSION_TTL_DAYS
+} from "../../lib/cookies.js";
 
-const COOKIE_NAME = "kokoc_sid";
-const CART_TTL_DAYS = 30;
+const COOKIE_NAME = SESSION_COOKIE_NAME;
+const CART_TTL_DAYS = SESSION_TTL_DAYS;
+const MAX_QTY = 99;
+
+/**
+ * Parse and validate a client-supplied quantity.
+ *
+ * Returns { ok: true, qty } or { ok: false, error }.
+ *
+ * Every mutating cart route funnels through this — previously
+ * handleUpdateItem() validated qty but handleAddItem() did not, so
+ * POST accepted values that PATCH rejected on the very same resource:
+ * qty=999999 (ordering far beyond stock), qty=2.7 (fractional rows in
+ * D1) and qty=-5 (which tripped the `quantity > 0` CHECK constraint
+ * and surfaced as an unhandled 500 instead of a 400).
+ *
+ * parseInt is deliberately NOT used: parseInt("12abc") === 12 would
+ * silently accept junk. Number() + Number.isInteger rejects the whole
+ * value, and the null/"" guard stops Number("") === 0 slipping through.
+ */
+function parseQty(raw, { fallback = null } = {}) {
+  if (raw === undefined && fallback !== null) raw = fallback;
+  if (raw === null || raw === undefined || raw === "" || typeof raw === "boolean") {
+    return { ok: false, error: "qty must be an integer" };
+  }
+  const qty = Number(raw);
+  if (!Number.isInteger(qty)) return { ok: false, error: "qty must be an integer" };
+  if (qty < 1) return { ok: false, error: "qty must be ≥ 1" };
+  if (qty > MAX_QTY) return { ok: false, error: "qty too large" };
+  return { ok: true, qty };
+}
 
 /* ── Helpers ──────────────────────────────────────────────── */
-
-function makeid(len = 21) {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let id = "";
-  const arr = new Uint8Array(len);
-  crypto.getRandomValues(arr);
-  arr.forEach(b => { id += chars[b % chars.length]; });
-  return id;
-}
-
-function parseCookies(header = "") {
-  return Object.fromEntries(
-    header.split(";").flatMap(s => {
-      const idx = s.indexOf("=");
-      if (idx === -1) return [];
-      try {
-        const k = decodeURIComponent(s.slice(0, idx).trim());
-        const v = decodeURIComponent(s.slice(idx + 1).trim());
-        return [[k, v]];
-      } catch { return []; }
-    })
-  );
-}
-
-function setSessionCookie(sid) {
-  const expires = new Date(Date.now() + CART_TTL_DAYS * 864e5).toUTCString();
-  return `${COOKIE_NAME}=${sid}; Path=/; HttpOnly; Secure; SameSite=Lax; Expires=${expires}`;
-}
 
 function fmt(minor) {
   return new Intl.NumberFormat("ru-RU", {
@@ -144,8 +153,12 @@ async function handleAddItem(request, env) {
   let body;
   try { body = await request.json(); } catch { return jsonResponse({ ok: false, error: "Invalid JSON" }, { status: 400 }); }
 
-  const { variantId, qty = 1 } = body;
+  const { variantId } = body;
   if (!variantId) return jsonResponse({ ok: false, error: "variantId required" }, { status: 400 });
+
+  const parsed = parseQty(body.qty, { fallback: 1 });
+  if (!parsed.ok) return jsonResponse({ ok: false, error: parsed.error }, { status: 400 });
+  const qty = parsed.qty;
 
   /* Validate variant exists and is in stock */
   const variant = await env.DB.prepare(
@@ -164,11 +177,33 @@ async function handleAddItem(request, env) {
     "SELECT * FROM cart_items WHERE cart_id = ? AND variant_id = ?"
   ).bind(cart.id, variantId).first();
 
+  /* Stock check applies to the RESULTING line quantity, not just the
+   * delta — otherwise "add 5" repeated ten times walks past a stock of
+   * 5 one request at a time. Same for the MAX_QTY ceiling. */
+  const resultingQty = existing ? existing.quantity + qty : qty;
+
+  if (resultingQty > MAX_QTY) {
+    return jsonResponse(
+      { ok: false, error: "qty too large", max: MAX_QTY, inCart: existing?.quantity ?? 0 },
+      { status: 400 }
+    );
+  }
+  if (resultingQty > variant.inventory_quantity) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "Not enough stock",
+        available: variant.inventory_quantity,
+        inCart: existing?.quantity ?? 0
+      },
+      { status: 409 }
+    );
+  }
+
   if (existing) {
-    const newQty = existing.quantity + qty;
     await env.DB.prepare(
       "UPDATE cart_items SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-    ).bind(newQty, existing.id).run();
+    ).bind(resultingQty, existing.id).run();
   } else {
     await env.DB.prepare(
       `INSERT INTO cart_items (id, cart_id, variant_id, quantity, price_minor)
@@ -229,9 +264,9 @@ async function handleUpdateItem(request, env, itemId) {
   let body;
   try { body = await request.json(); } catch { return jsonResponse({ ok: false, error: "Invalid JSON" }, { status: 400 }); }
 
-  const qty = parseInt(body.qty, 10);
-  if (!qty || qty < 1) return jsonResponse({ ok: false, error: "qty must be ≥ 1" }, { status: 400 });
-  if (qty > 99)        return jsonResponse({ ok: false, error: "qty too large" },    { status: 400 });
+  const parsed = parseQty(body.qty);
+  if (!parsed.ok) return jsonResponse({ ok: false, error: parsed.error }, { status: 400 });
+  const qty = parsed.qty;
 
   const cookies = parseCookies(request.headers.get("cookie") || "");
   const sid = cookies[COOKIE_NAME];
@@ -276,35 +311,16 @@ async function handleUpdateItem(request, env, itemId) {
   return jsonResponse({ ok: true, cart: data });
 }
 
-/* ── CSRF origin guard ────────────────────────────────────────
- * Mutable cart operations (POST / PATCH / DELETE) must originate
- * from the same site. We check Origin first, fall back to Referer.
- * GET is safe and skipped. Localhost is allowed for dev / Vitest.
- * ──────────────────────────────────────────────────────────── */
-
-const ALLOWED_ORIGINS = ["https://kokoc.store", "https://www.kokoc.store"];
-
-function isSameOrigin(request) {
-  const method = request.method.toUpperCase();
-  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return true;
-
-  const origin  = request.headers.get("origin")  || "";
-  const referer = request.headers.get("referer") || "";
-
-  // Allow local dev / Vitest (no Origin header or localhost)
-  if (!origin && !referer) return true;
-  if (origin.startsWith("http://localhost") || origin.startsWith("http://127.0.0.1")) return true;
-
-  if (origin) return ALLOWED_ORIGINS.includes(origin);
-
-  // Fallback: Referer must start with an allowed origin
-  return ALLOWED_ORIGINS.some(o => referer.startsWith(o));
-}
-
 /* ── Main export ──────────────────────────────────────────── */
 
+/**
+ * Note: the CSRF/same-origin guard that used to live here has moved to
+ * lib/csrf.js and is now applied for ALL /api/* routes in
+ * routes/api/index.js — so it covers orders, minigame and subscribe too,
+ * not just the cart. Kept as a defence-in-depth call below in case this
+ * handler is ever wired up from somewhere other than the API router.
+ */
 export async function handleCartRequest(request, env) {
-  /* CSRF guard — reject cross-origin mutations */
   if (!isSameOrigin(request)) {
     return jsonResponse(
       { ok: false, error: "Forbidden" },

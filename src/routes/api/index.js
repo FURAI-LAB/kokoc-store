@@ -6,6 +6,7 @@ import { getApprovedReviews, submitReview } from "../../lib/reviews.js";
 import { handleCreateOrder } from "./orders.js";
 import { handleMinigameRequest } from "./minigame.js";
 import { rateLimit } from "../../lib/ratelimit.js";
+import { isSameOrigin } from "../../lib/csrf.js";
 
 async function hashIp(ip) {
   if (!ip) return null;
@@ -168,6 +169,16 @@ async function handleProductReviews(request, env, slug) {
 
 export async function handleApiRequest(request, env, appConfig, ctx) {
   const url = new URL(request.url);
+
+  /* ── CSRF guard ────────────────────────────────────────────────────────
+   * Applied once, here, so it covers EVERY /api/* route including ones
+   * added later. Previously this check lived inside cart.js and protected
+   * only /api/cart/* — orders, minigame, subscribe and reviews were all
+   * reachable cross-origin. Safe methods pass through untouched.
+   * ─────────────────────────────────────────────────────────────────── */
+  if (!isSameOrigin(request)) {
+    return jsonResponse({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
 
   if (url.pathname === "/api/health") {
     return handleHealth(request, env, appConfig);
