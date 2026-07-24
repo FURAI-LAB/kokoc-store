@@ -32,4 +32,3 @@ export const CHARM_ICONS = [
  * minigame.js styles) instead of an SVG overlay, since we no longer render
  * an inline <svg> to layer markup on top of.
  */
-export const BOMB_OVERLAY = "";

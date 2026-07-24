@@ -54,10 +54,6 @@ export function getCollabs({ status = null } = {}) {
   return COLLABS;
 }
 
-export function getCollabBySlug(slug) {
-  return COLLABS.find(c => c.slug === slug) ?? null;
-}
-
 /**
  * Loads collabs from KV when available.
  * Used by server.js to render the public page.
