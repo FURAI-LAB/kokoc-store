@@ -1,0 +1,39 @@
+name: tests
+
+# Тесты гоняются на каждый push в main и на каждый pull request.
+# Раньше 423 теста запускались вручную — то есть когда вспомнишь.
+# Здесь они запускаются всегда, и красная сборка видна до деплоя,
+# а не после.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Если запушить несколько раз подряд, старые запуски отменяются —
+# не ждём очередь ради результата, который уже неактуален.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # npm ci, а не npm install: ставит строго по package-lock.json,
+      # так что CI проверяет ровно те версии, что зафиксированы в репо.
+      - name: Install dependencies
+        run: npm ci
+
+      # Проверено локально: 423 теста проходят без .dev.vars,
+      # поэтому секреты для прогона не нужны.
+      - name: Run tests
+        run: npm test
