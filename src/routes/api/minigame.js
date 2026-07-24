@@ -21,6 +21,8 @@
 
 import { jsonResponse, methodNotAllowedResponse } from "../../lib/response.js";
 import { rateLimit } from "../../lib/ratelimit.js";
+import { makeid, makePromoCode } from "../../lib/ids.js";
+import { parseCookies, setSessionCookie, SESSION_COOKIE_NAME } from "../../lib/cookies.js";
 import {
   seedFromString,
   replayGame,
@@ -28,49 +30,10 @@ import {
   MAX_MOVES
 } from "../../lib/minigame-engine.js";
 
-const COOKIE_NAME = "kokoc_sid";
-const SID_TTL_DAYS = 30;
+const COOKIE_NAME = SESSION_COOKIE_NAME;
 const PROMO_TTL_DAYS = 14;
 const PROMO_DISCOUNT_MINOR = 50000; // 500.00 RUB, fixed
 const SESSION_TTL_MINUTES = 30; // a session must be finished within this window
-
-function parseCookies(header = "") {
-  return Object.fromEntries(
-    header.split(";").flatMap(s => {
-      const idx = s.indexOf("=");
-      if (idx === -1) return [];
-      try {
-        const k = decodeURIComponent(s.slice(0, idx).trim());
-        const v = decodeURIComponent(s.slice(idx + 1).trim());
-        return [[k, v]];
-      } catch { return []; }
-    })
-  );
-}
-
-function makeid(len = 21) {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let id = "";
-  const arr = new Uint8Array(len);
-  crypto.getRandomValues(arr);
-  arr.forEach(b => { id += chars[b % chars.length]; });
-  return id;
-}
-
-function setSessionCookie(sid) {
-  const expires = new Date(Date.now() + SID_TTL_DAYS * 864e5).toUTCString();
-  return `${COOKIE_NAME}=${sid}; Path=/; HttpOnly; Secure; SameSite=Lax; Expires=${expires}`;
-}
-
-/** Human-friendly promo code: KOKOC- + 8 unambiguous chars (no 0/O/1/I). */
-function makePromoCode() {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let code = "";
-  const arr = new Uint8Array(8);
-  crypto.getRandomValues(arr);
-  arr.forEach(b => { code += chars[b % chars.length]; });
-  return `KOKOC-${code}`;
-}
 
 async function hashIp(ip) {
   if (!ip) return null;
