@@ -263,6 +263,47 @@ describe("csrf: same-origin guard", () => {
     });
     expect(isSameOrigin(req)).toBe(false);
   });
+
+  /**
+   * Local development.
+   *
+   * Found in manual testing, not by these tests: POST /api/orders returned
+   * 403 under `wrangler dev` because the localhost exemption checked only
+   * the Origin header, and Safari sent a same-site POST with Referer alone.
+   * Production was unaffected (its Origin matches the allow-list), so this
+   * would only have surfaced after deploy — as "local order testing stopped
+   * working" with no obvious cause.
+   */
+  const post = headers =>
+    new Request("http://localhost:8787/api/orders", { method: "POST", headers });
+
+  it("allows wrangler dev when only Referer is present", () => {
+    expect(isSameOrigin(post({ referer: "http://localhost:8787/crocs" }))).toBe(true);
+    expect(isSameOrigin(post({ referer: "http://127.0.0.1:8787/crocs" }))).toBe(true);
+  });
+
+  it("allows wrangler dev via Origin", () => {
+    expect(isSameOrigin(post({ origin: "http://localhost:8787" }))).toBe(true);
+  });
+
+  it("does not treat localhost.evil.com as local", () => {
+    // A startsWith("http://localhost") check would have allowed both.
+    expect(isSameOrigin(post({ origin: "http://localhost.evil.com" }))).toBe(false);
+    expect(isSameOrigin(post({ referer: "http://localhost.evil.com/x" }))).toBe(false);
+  });
+
+  it("does not let a localhost Referer rescue a hostile Origin", () => {
+    // Origin is authoritative whenever present.
+    expect(isSameOrigin(post({
+      origin: "https://evil.example",
+      referer: "http://localhost:8787/x"
+    }))).toBe(false);
+  });
+
+  it("rejects unparseable or non-http Referer values", () => {
+    expect(isSameOrigin(post({ referer: "not-a-url" }))).toBe(false);
+    expect(isSameOrigin(post({ referer: "javascript:alert(1)" }))).toBe(false);
+  });
 });
 
 /* ──────────────────────────────────────────────────────────────────────

@@ -41,6 +41,42 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
  *   not the CSRF threat model, since they can't ride a victim's cookies.
  * @returns {boolean} true = allowed
  */
+/**
+ * Is this URL a local development origin?
+ *
+ * Parsed with the URL API rather than string prefixes: "http://localhost.evil.com"
+ * starts with "http://localhost" but is NOT localhost, and a naive
+ * startsWith() check would have waved it through.
+ */
+function isLocalDevUrl(value) {
+  if (!value) return false;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  return url.hostname === "localhost"
+    || url.hostname === "127.0.0.1"
+    || url.hostname === "[::1]"
+    || url.hostname === "::1";
+}
+
+/** Does this Referer belong to one of our allowed origins? */
+function refererMatchesAllowed(referer) {
+  if (!referer) return false;
+  let url;
+  try {
+    url = new URL(referer);
+  } catch {
+    return false;
+  }
+  // Compare the parsed origin, never a string prefix: startsWith() would
+  // have accepted "https://kokoc.store.evil.com/".
+  return ALLOWED_ORIGINS.includes(url.origin);
+}
+
 export function isSameOrigin(request, { allowMissingOrigin = true } = {}) {
   const method = (request.method || "GET").toUpperCase();
   if (SAFE_METHODS.has(method)) return true;
@@ -50,13 +86,17 @@ export function isSameOrigin(request, { allowMissingOrigin = true } = {}) {
 
   if (!origin && !referer) return allowMissingOrigin;
 
-  // Localhost / 127.0.0.1 for `wrangler dev`.
-  if (origin.startsWith("http://localhost") || origin.startsWith("http://127.0.0.1")) return true;
+  // Local development (`wrangler dev`). Checked against BOTH headers:
+  // Safari omits Origin on some same-site POSTs and sends only Referer,
+  // so an Origin-only check broke order creation under wrangler dev while
+  // working fine in production — a bug that would only have surfaced after
+  // deploy, when local testing silently stopped working.
+  if (isLocalDevUrl(origin) || (!origin && isLocalDevUrl(referer))) return true;
 
   // Origin is the authoritative signal when present — an attacker page
   // cannot forge it, and unlike Referer it is not stripped by privacy
   // settings. Only fall back to Referer when Origin is absent entirely.
   if (origin) return ALLOWED_ORIGINS.includes(origin);
 
-  return ALLOWED_ORIGINS.some(o => referer === o || referer.startsWith(o + "/"));
+  return refererMatchesAllowed(referer);
 }
