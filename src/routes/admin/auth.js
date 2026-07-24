@@ -16,6 +16,27 @@ async function hmac(secret, message) {
   return btoa(String.fromCharCode(...new Uint8Array(sig)));
 }
 
+/**
+ * Constant-time string comparison, to avoid leaking secret length/content
+ * via response-time differences. Used for both the admin password check
+ * and the session HMAC check — neither should ever use `===` directly.
+ *
+ * crypto.subtle.timingSafeEqual is a Cloudflare Workers / workerd-specific
+ * extension to the Web Crypto API (not available in Node or browsers). It
+ * throws if the two buffers have different lengths, so a length mismatch
+ * is handled by comparing the buffer against itself instead of returning
+ * early — returning early would leak the secret's length via timing.
+ */
+export function timingSafeEqual(a, b) {
+  const bufA = new TextEncoder().encode(String(a ?? ""));
+  const bufB = new TextEncoder().encode(String(b ?? ""));
+  if (bufA.byteLength !== bufB.byteLength) {
+    crypto.subtle.timingSafeEqual(bufA, bufA);
+    return false;
+  }
+  return crypto.subtle.timingSafeEqual(bufA, bufB);
+}
+
 export async function createSessionCookie(env) {
   const expires = Math.floor(Date.now() / 1000) + SESSION_TTL_SEC;
   const payload = `${expires}`;
@@ -37,7 +58,7 @@ export async function isValidSession(request, env) {
     const expires = parseInt(payload, 10);
     if (Date.now() / 1000 > expires) return false;
     const expected = await hmac(env.ADMIN_SECRET, payload);
-    return sig === expected;
+    return timingSafeEqual(sig, expected);
   } catch {
     return false;
   }

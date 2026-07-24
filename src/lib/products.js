@@ -9,6 +9,7 @@ export async function getActiveProducts(env, { limit = 6 } = {}) {
       p.title,
       p.slug,
       p.description,
+      p.badge,
       pv.price_minor,
       pv.compare_at_minor,
       pi.r2_key
@@ -19,8 +20,10 @@ export async function getActiveProducts(env, { limit = 6 } = {}) {
     LEFT JOIN product_images pi ON pi.product_id = p.id
       AND pi.position = 0
     WHERE p.status = 'active'
+      AND p.badge = 'hit'
     GROUP BY p.id
-    ORDER BY p.created_at DESC
+    ORDER BY
+      p.created_at DESC
     LIMIT ?
   `).bind(limit).all();
 
@@ -29,6 +32,8 @@ export async function getActiveProducts(env, { limit = 6 } = {}) {
     title: row.title,
     slug: row.slug,
     description: row.description || "",
+    badge: row.badge || null,
+    badgeClass: row.badge || null,
     price: row.price_minor
       ? formatPrice(row.price_minor)
       : null,

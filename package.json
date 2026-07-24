@@ -5,6 +5,12 @@
   "scripts": {
     "check": "node --input-type=module -e \"await import('./src/index.js')\"",
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.16.12",
+    "vitest": "^4.1.8"
   }
 }

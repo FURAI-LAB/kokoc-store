@@ -1,7 +1,17 @@
 import { jsonResponse } from "../../lib/response.js";
 import { sendEmail } from "../../lib/email.js";
+import { rateLimit } from "../../lib/ratelimit.js";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+async function hashIp(ip) {
+  if (!ip) return null;
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ip));
+  return Array.from(new Uint8Array(buf))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 16);
+}
 
 export async function handleSubscribe(request, env, ctx) {
   if (request.method !== "POST") {
@@ -17,21 +27,27 @@ export async function handleSubscribe(request, env, ctx) {
   }
 
   if (!email || !EMAIL_RE.test(email)) {
-    return jsonResponse({ ok: false, error: "Некорректный email" }, { status: 400 });
+    return jsonResponse({ ok: false, error: "Invalid email" }, { status: 400 });
   }
 
   if (email.length > 254) {
-    return jsonResponse({ ok: false, error: "Email слишком длинный" }, { status: 400 });
+    return jsonResponse({ ok: false, error: "Email is too long" }, { status: 400 });
   }
 
   const ip = request.headers.get("CF-Connecting-IP") || "";
-  const ipHash = ip
-    ? Array.from(
-        new Uint8Array(
-          await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ip))
-        )
-      ).map(b => b.toString(16).padStart(2, "0")).join("").slice(0, 16)
-    : null;
+  const ipHash = await hashIp(ip);
+
+  /* ── Rate limit: 5 subscribes per IP per hour ─────────────── */
+  const allowed = await rateLimit(env.KV, "subscribe", ipHash, {
+    limit: 5,
+    windowMs: 60 * 60 * 1000,
+  });
+  if (!allowed) {
+    return jsonResponse(
+      { ok: false, error: "Too many requests. Please try again later." },
+      { status: 429 }
+    );
+  }
 
   try {
     await env.DB.prepare(`
@@ -39,32 +55,31 @@ export async function handleSubscribe(request, env, ctx) {
       VALUES (?, ?, 'newsletter', ?)
     `).bind(crypto.randomUUID(), email, ipHash).run();
 
-    // Send notification email - fire and forget, does not block response
-    const now = new Date().toLocaleString('ru-RU', {
-      timeZone: 'Asia/Ho_Chi_Minh',
-      day: '2-digit', month: '2-digit', year: 'numeric',
-      hour: '2-digit', minute: '2-digit'
+    const now = new Date().toLocaleString("en-US", {
+      timeZone: "Asia/Ho_Chi_Minh",
+      day: "2-digit", month: "2-digit", year: "numeric",
+      hour: "2-digit", minute: "2-digit",
     });
 
     ctx.waitUntil(
       sendEmail(env, {
         to: "kokoc.store@gmail.com",
-        subject: `🐾 Новый подписчик — ${email}`,
+        subject: `🐾 New subscriber — ${email}`,
         html: `
           <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px">
-            <h2 style="margin:0 0 16px;font-size:20px">Новый подписчик на Kokoc Store</h2>
+            <h2 style="margin:0 0 16px;font-size:20px">New subscriber to Kokoc Store</h2>
             <table style="width:100%;border-collapse:collapse;font-size:14px">
               <tr>
                 <td style="padding:10px 0;color:#888;width:100px">Email</td>
                 <td style="padding:10px 0;font-weight:600">${email}</td>
               </tr>
               <tr>
-                <td style="padding:10px 0;color:#888">Дата</td>
+                <td style="padding:10px 0;color:#888">Date</td>
                 <td style="padding:10px 0">${now} (GMT+7)</td>
               </tr>
               <tr>
-                <td style="padding:10px 0;color:#888">Источник</td>
-                <td style="padding:10px 0">Newsletter форма</td>
+                <td style="padding:10px 0;color:#888">Source</td>
+                <td style="padding:10px 0">Newsletter form</td>
               </tr>
             </table>
             <hr style="border:none;border-top:1px solid #eee;margin:20px 0">
@@ -76,11 +91,11 @@ export async function handleSubscribe(request, env, ctx) {
       })
     );
 
-    return jsonResponse({ ok: true, message: "Подписка оформлена" }, { status: 201 });
+    return jsonResponse({ ok: true, message: "You're subscribed" }, { status: 201 });
   } catch (err) {
     if (err.message?.includes("UNIQUE")) {
-      return jsonResponse({ ok: true, message: "Уже подписан" }, { status: 200 });
+      return jsonResponse({ ok: true, message: "Already subscribed" }, { status: 200 });
     }
-    return jsonResponse({ ok: false, error: "Ошибка сервера" }, { status: 500 });
+    return jsonResponse({ ok: false, error: "Server error" }, { status: 500 });
   }
 }

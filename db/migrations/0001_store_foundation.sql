@@ -1,3 +1,6 @@
+-- Migration 0001: store foundation
+-- Initial schema: products, variants, orders, and related core tables.
+
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS products (

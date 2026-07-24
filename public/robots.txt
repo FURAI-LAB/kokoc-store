@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /api/
+Disallow: /r2/
+Disallow: /cdn/
+
+Sitemap: https://kokoc.store/sitemap.xml

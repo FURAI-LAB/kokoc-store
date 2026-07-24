@@ -1,4 +1,22 @@
-export function renderLandingPage(appConfig, products = []) {
+import {
+  i18n,
+  languageSwitcherScript,
+  languageSwitcherStyles,
+  renderLanguageSwitcher
+} from "../lib/i18n.js";
+import { renderSeoHead, organizationJsonLd, websiteJsonLd, jsonLdScripts } from "../lib/seo.js";
+import { renderNavbar, navbarStyles, navbarScript, navbarUi } from "../lib/navbar.js";
+import { escapeHtml } from "../lib/html.js";
+import { stripHtmlToText } from "../lib/rich-text.js";
+
+export function renderLandingPage(appConfig, products = [], locale = "ru", whatsappNumber = "", nonce = null) {
+  const tr = i18n(locale);
+  const langSwitcher = renderLanguageSwitcher(tr);
+  const waNumber = (whatsappNumber || "").replace(/\D/g, "");
+  const uiJson = JSON.stringify({
+    subscribeError: tr.t("subscribeError"),
+    subscribeOffline: tr.t("subscribeOffline")
+  });
   const iconSearch = `
     <svg viewBox="0 0 24 24" fill="none" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <circle cx="10.8" cy="10.8" r="6.7"></circle>
@@ -14,8 +32,10 @@ export function renderLandingPage(appConfig, products = []) {
 
   const iconBag = `
     <svg viewBox="0 0 24 24" fill="none" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <path d="M6.8 8.6h10.4l-1 10.2H7.8L6.8 8.6Z"></path>
-      <path d="M9.2 8.6a2.8 2.8 0 1 1 5.6 0"></path>
+      <path d="M5.5 6.2h1.8l1 2.8"></path>
+      <path d="M8.3 9h10.4l-1.7 6H9.3Z"></path>
+      <circle cx="10.3" cy="17.3" r="1.2"></circle>
+      <circle cx="16" cy="17.3" r="1.2"></circle>
     </svg>
   `;
 
@@ -27,24 +47,20 @@ export function renderLandingPage(appConfig, products = []) {
     </svg>
   `;
 
-  const escapeHtml = (value = "") => String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-
   const ProductCard = (product) => {
     const title = escapeHtml(product.title);
-    const description = escapeHtml(product.description);
+    // description is sanitized rich-text HTML — the compact product
+    // card shows a plain-text preview, not the formatted version.
+    const description = escapeHtml(stripHtmlToText(product.description));
     const image = escapeHtml(product.image || "/crops/product-placeholder.png");
-    const badge = escapeHtml(product.badge);
-    const badgeClass = escapeHtml(product.badgeClass);
-    const price = escapeHtml(product.price || "Нет в наличии");
-    const comparePrice = escapeHtml(product.comparePrice);
+    const badge = product.badge ? escapeHtml(product.badge) : null;
+    const badgeClass = product.badgeClass ? escapeHtml(product.badgeClass) : null;
+    const price = escapeHtml(product.price || tr.t("outOfStock"));
+    const comparePrice = product.comparePrice ? escapeHtml(product.comparePrice) : null;
 
+    const slug = escapeHtml(product.slug || "");
     return `
-      <article class="product-card">
+      <a class="product-card" href="/product/${slug}" data-slug="${slug}" aria-label="${title}">
         <div class="product-media">
           <img
             src="${image}"
@@ -56,16 +72,13 @@ export function renderLandingPage(appConfig, products = []) {
           ${badge
             ? `<span class="badge badge-${badgeClass}">${badge}</span>`
             : ""}
-          <button class="favorite-button" type="button"
-            aria-label="Добавить ${title} в избранное">
+          <button class="favorite-button fav-btn" type="button" data-slug="${slug}"
+            aria-label="${tr.t("addToWishlist")}: ${title}" aria-pressed="false">
             ${iconHeart}
           </button>
         </div>
         <div class="product-copy">
           <h3>${title}</h3>
-          ${description
-            ? `<p>${description}</p>`
-            : ""}
           <div class="product-price">
             ${comparePrice
               ? `<s class="price-compare">${comparePrice}</s>`
@@ -73,33 +86,17 @@ export function renderLandingPage(appConfig, products = []) {
             <strong>${price}</strong>
           </div>
         </div>
-      </article>
+      </a>
     `;
   };
 
-  const Navbar = () => `
-      <header class="navbar" aria-label="Основная навигация">
-        <a class="brand" href="/" aria-label="${appConfig.domain}">
-          <img src="/menu-logo.png" alt="Kokoc Store" />
-        </a>
-        <nav class="desktop-nav">
-          <a href="#hits">Shop</a>
-          <a href="#collabs">Collabs</a>
-          <a href="#newsletter">About</a>
-        </nav>
-        <div class="nav-actions" aria-label="Быстрые действия">
-          <button class="icon-button" type="button" aria-label="Поиск">${iconSearch}</button>
-          <button class="icon-button desktop-only" type="button" aria-label="Избранное">${iconHeart}</button>
-          <button class="icon-button" type="button" aria-label="Корзина">${iconBag}</button>
-          <button class="icon-button mobile-only" type="button" aria-label="Меню">${iconMenu}</button>
-        </div>
-      </header>
-  `;
+  const PageNavbar = () => renderNavbar(appConfig, tr, langSwitcher, waNumber);
 
   const Hero = () => `
     <section class="hero" id="about">
+      <h1 class="sr-only">${tr.t("landingH1")}</h1>
       <div class="hero__cta">
-        <button class="hero__button" type="button">Shop Now</button>
+        <a class="hero__button" href="/catalog">${tr.t("shopNow")}</a>
       </div>
     </section>
   `;
@@ -108,15 +105,15 @@ export function renderLandingPage(appConfig, products = []) {
     <section class="hits-section" id="hits">
       <div class="section-inner">
         <div class="section-header">
-          <h2>HITS</h2>
-          <a href="#collabs">Смотреть все</a>
+          <h2>${tr.t("hits")}</h2>
+          <a href="/catalog">${tr.t("seeAll")}</a>
         </div>
         ${products.length > 0
-          ? `<div class="product-grid">
+          ? `<div class="product-grid" id="hits-grid">
                ${products.map(ProductCard).join("")}
              </div>`
           : `<p style="color:var(--secondary-text);padding:40px 0;text-align:center">
-               Товары скоро появятся
+               ${tr.t("productsComingSoon")}
              </p>`
         }
       </div>
@@ -124,17 +121,23 @@ export function renderLandingPage(appConfig, products = []) {
   `;
 
   const PromoBanner = () => `
-    <section class="promo-banner" id="collabs" aria-label="Доставка">
-      <a class="image-panel" href="#newsletter">
-        <img src="/crops/delivery-bg.png" alt="Доставка по Вьетнаму" loading="lazy" />
+    <section class="promo-banner" aria-label="${tr.t("deliveryTitle")}">
+      <a class="image-panel delivery-banner-link" href="/delivery">
+        <picture>
+          <source srcset="/crops/delivery-bg.webp" type="image/webp" />
+          <img src="/crops/delivery-bg.jpg" alt="${tr.t("deliveryTitle")}" loading="lazy" />
+        </picture>
       </a>
     </section>
   `;
 
   const MiniGame = () => `
     <section class="mini-game" aria-label="Mini Game">
-      <a class="image-panel" href="#newsletter">
-        <img src="/crops/minigame-banner-final.png" alt="Mini Game" loading="lazy" />
+      <a class="image-panel" href="/minigame">
+        <picture>
+          <source srcset="/crops/minigame-banner-final.webp" type="image/webp" />
+          <img src="/crops/minigame-banner-final.jpg" alt="Mini Game" loading="lazy" />
+        </picture>
       </a>
     </section>
   `;
@@ -144,18 +147,18 @@ export function renderLandingPage(appConfig, products = []) {
       <div class="newsletter">
         <img class="newsletter-avatar" src="/favbig.jpg" alt="Kokoc cat avatar" loading="lazy" />
         <div class="newsletter-copy">
-          <h2>Будь в теме</h2>
-          <p>Подпишись и получай новости о дропах первым.</p>
+          <h2>${tr.t("stayLoop")}</h2>
+          <p>${tr.t("newDrops")}</p>
         </div>
         <div class="newsletter-form" id="newsletter-form">
           <input
             type="email"
             id="newsletter-email"
-            placeholder="Твоя почта / e-mail"
-            aria-label="Email"
+            placeholder="${tr.t("yourEmail")}"
+            aria-label="${tr.t("yourEmail")}"
             autocomplete="email"
           />
-          <button type="button" id="newsletter-btn" aria-label="Подписаться">
+          <button type="button" id="newsletter-btn" aria-label="${tr.t("subscribe")}">
             <svg viewBox="0 0 24 24" fill="none" stroke-width="1.85" stroke-linecap="round"
               stroke-linejoin="round" aria-hidden="true">
               <path d="M5 12h14"></path>
@@ -167,8 +170,55 @@ export function renderLandingPage(appConfig, products = []) {
           font-size:13px;text-align:center"></p>
       </div>
     </section>
-    <script>
+    <script nonce="${nonce}">
       (function () {
+        const UI = ${uiJson};
+        ${languageSwitcherScript}
+      })();
+      ${navbarScript(navbarUi(tr, waNumber))}
+      (function () {
+        const UI = ${uiJson};
+
+        /* ── Favourites (localStorage) — shared Set comes from lib/navbar.js ── */
+        function syncFavButtons() {
+          document.querySelectorAll('.fav-btn[data-slug]').forEach(btn => {
+            btn.setAttribute('aria-pressed', window.kokocFavs.has(btn.dataset.slug) ? 'true' : 'false');
+          });
+        }
+
+        /* ── Hits product grid: fav toggle only — card <a> handles navigation natively ── */
+        const hitsGrid = document.getElementById('hits-grid');
+        if (hitsGrid) {
+          hitsGrid.addEventListener('click', function(e) {
+            const favBtn = e.target.closest('.fav-btn');
+            if (favBtn) {
+              e.preventDefault();
+              e.stopPropagation();
+              const favs = window.kokocFavs;
+              const s = favBtn.dataset.slug;
+              const adding = !favs.has(s);
+              favs.has(s) ? favs.delete(s) : favs.add(s);
+              window.kokocSaveFavs();
+              favBtn.setAttribute('aria-pressed', favs.has(s) ? 'true' : 'false');
+
+              if (adding) {
+                favBtn.classList.remove('fav-just-added');
+                void favBtn.offsetWidth;
+                favBtn.classList.add('fav-just-added');
+                favBtn.addEventListener('animationend', () => favBtn.classList.remove('fav-just-added'), { once: true });
+                window.kokocTriggerWishlistAnim();
+              }
+
+              window.kokocUpdateWishlistBadge();
+            }
+            /* Native <a href="/catalog?open=slug"> handles card navigation — no JS needed */
+          });
+        }
+        // Re-sync the hits-grid heart fill state whenever the wishlist drawer
+        // removes an item, so a card's heart un-fills if it was removed there.
+        window.kokocOnFavRemoved = syncFavButtons;
+        syncFavButtons();
+
         const btn   = document.getElementById('newsletter-btn');
         const input = document.getElementById('newsletter-email');
         const msg   = document.getElementById('newsletter-msg');
@@ -206,14 +256,14 @@ export function renderLandingPage(appConfig, products = []) {
               }, 5000);
             } else {
               msg.style.color = '#ff4757';
-              msg.textContent = data.error || 'Ошибка, попробуй ещё раз';
+              msg.textContent = data.error || UI.subscribeError;
               btn.disabled = false;
               input.disabled = false;
             }
           } catch {
             msg.style.display = 'block';
             msg.style.color = '#ff4757';
-            msg.textContent = 'Нет соединения, попробуй позже';
+            msg.textContent = UI.subscribeOffline;
             btn.disabled = false;
             input.disabled = false;
           }
@@ -228,22 +278,37 @@ export function renderLandingPage(appConfig, products = []) {
   `;
 
   return `<!DOCTYPE html>
-<html lang="ru">
+<html lang="${tr.locale}">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>${appConfig.domain}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    ${renderSeoHead({
+      appConfig,
+      title: tr.t("landingTitle"),
+      description: tr.t("landingDescription"),
+      path: "/",
+      locale: tr.locale,
+      image: "/images/hero.jpg",
+      alternates: { ru: "/", en: "/" }
+    })}
+    ${jsonLdScripts(nonce, organizationJsonLd(appConfig), websiteJsonLd(appConfig))}
+    <meta name="yandex-verification" content="96b240868d48e87e" />
     <meta name="theme-color" content="#F7F7F6" />
-    <meta
-      name="description"
-      content="Kokoc Store. Premium pastel lifestyle drops, Crocs collabs, hits and mini game."
-    />
-    <link rel="preload" as="image" href="/images/hero.png" />
-    <link rel="preload" as="image" href="/images/hero-mobile.png" media="(max-width: 768px)" />
+    <link rel="preload" as="image" href="/images/hero.webp" type="image/webp" media="(min-width: 1025px)" />
+    <link rel="preload" as="image" href="/images/hero.jpg" media="(min-width: 1025px)" />
+    <link rel="preload" as="image" href="/images/hero-tablet.webp" type="image/webp" media="(min-width: 769px) and (max-width: 1024px) and (orientation: landscape)" />
+    <link rel="preload" as="image" href="/images/hero-tablet.jpg" media="(min-width: 769px) and (max-width: 1024px) and (orientation: landscape)" />
+    <link rel="preload" as="image" href="/images/hero-tablet-portrait.webp" type="image/webp" media="(min-width: 769px) and (max-width: 1024px) and (orientation: portrait)" />
+    <link rel="preload" as="image" href="/images/hero-tablet-portrait.jpg" media="(min-width: 769px) and (max-width: 1024px) and (orientation: portrait)" />
+    <link rel="preload" as="image" href="/images/hero-mobile.webp" type="image/webp" media="(max-width: 768px)" />
+    <link rel="preload" as="image" href="/images/hero-mobile.jpg" media="(max-width: 768px)" />
     <link rel="preload" as="image" href="/menu-logo.png" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favsmall.png" />
     <link rel="icon" type="image/jpeg" sizes="720x720" href="/favbig.jpg" />
     <link rel="apple-touch-icon" href="/favbig.jpg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <style>
       :root {
         --background: #F7F7F6;
@@ -260,8 +325,21 @@ export function renderLandingPage(appConfig, products = []) {
         box-sizing: border-box;
       }
 
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
       html {
         scroll-behavior: smooth;
+        overflow-x: hidden;
         background:
           radial-gradient(circle at 50% 0%, rgba(255, 240, 245, 0.4), transparent 60%),
           #F7F7F6;
@@ -270,12 +348,11 @@ export function renderLandingPage(appConfig, products = []) {
       body {
         margin: 0;
         min-height: 100vh;
-        overflow-x: hidden;
         background:
           radial-gradient(circle at 50% 0%, rgba(255, 240, 245, 0.4), transparent 60%),
           #F7F7F6;
         color: var(--text);
-        font-family: "Avenir Next", "Segoe UI", Arial, sans-serif;
+        font-family: "Manrope", "Segoe UI", Arial, sans-serif;
       }
 
       a {
@@ -339,8 +416,9 @@ export function renderLandingPage(appConfig, products = []) {
         display: flex;
         align-items: center;
         justify-content: center;
-        gap: 24px;
+        gap: 20px;
         transform: translateX(-50%);
+        white-space: nowrap;
       }
 
       .desktop-nav a {
@@ -360,34 +438,29 @@ export function renderLandingPage(appConfig, products = []) {
         display: flex;
         align-items: center;
         justify-content: flex-end;
-        gap: 8px;
+        gap: 6px;
       }
 
-      .icon-button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 36px;
-        height: 36px;
-        border-radius: 50%;
-        transition: color 220ms ease, transform 220ms ease, background 220ms ease;
+      /* ── Wishlist heart bump animation on product cards (page-specific .fav-btn) ── */
+      @keyframes heartBeat {
+        0%   { transform: scale(1); }
+        30%  { transform: scale(1.32); }
+        55%  { transform: scale(0.9); }
+        75%  { transform: scale(1.15); }
+        100% { transform: scale(1); }
       }
-
-      .icon-button svg {
-        width: 20px;
-        height: 20px;
-        stroke: currentColor;
-      }
-
-      .icon-button:hover {
-        color: var(--primary);
-        background: rgba(255, 255, 255, 0.72);
-        transform: translateY(-1px);
+      .fav-btn.fav-just-added svg {
+        animation: heartBeat 420ms cubic-bezier(.36,.07,.19,.97);
+        color: #FF6B9A;
+        fill: rgba(255,107,154,0.15);
       }
 
       .mobile-only {
         display: none;
       }
+
+${languageSwitcherStyles}
+${navbarStyles}
 
       .hero {
         position: relative;
@@ -396,7 +469,11 @@ export function renderLandingPage(appConfig, products = []) {
         height: 90vh;
         min-height: 700px;
         overflow: hidden;
-        background-image: url('/images/hero.png');
+        background-image: url('/images/hero.jpg');
+        background-image: image-set(
+          url('/images/hero.webp') type('image/webp'),
+          url('/images/hero.jpg') type('image/jpeg')
+        );
         background-size: cover;
         background-position: center;
         background-repeat: no-repeat;
@@ -409,7 +486,52 @@ export function renderLandingPage(appConfig, products = []) {
         transform: translateX(-50%);
       }
 
-      .hero__cta button {
+      @media (min-width: 769px) and (max-width: 1024px) and (orientation: landscape) {
+        .hero {
+          height: 78vh;
+          min-height: 650px;
+          background-image: url('/images/hero-tablet.jpg');
+          background-image: image-set(
+            url('/images/hero-tablet.webp') type('image/webp'),
+            url('/images/hero-tablet.jpg') type('image/jpeg')
+          );
+          background-size: cover;
+          background-position: center;
+          background-repeat: no-repeat;
+        }
+
+        .hero__cta {
+          top: 68%;
+          left: 22%;
+        }
+      }
+
+      @media (min-width: 769px) and (max-width: 1024px) and (orientation: portrait) {
+        .hero {
+          height: 78vh;
+          min-height: 700px;
+          max-height: 920px;
+          background-image: url('/images/hero-tablet-portrait.jpg');
+          background-image: image-set(
+            url('/images/hero-tablet-portrait.webp') type('image/webp'),
+            url('/images/hero-tablet-portrait.jpg') type('image/jpeg')
+          );
+          background-size: cover;
+          background-position: center center;
+          background-repeat: no-repeat;
+        }
+
+        .hero__cta {
+          top: 50%;
+          left: 30%;
+          transform: translateX(-50%);
+        }
+      }
+
+      .hero__cta .hero__button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         width: 190px;
         height: 50px;
         border-radius: 999px;
@@ -423,20 +545,21 @@ export function renderLandingPage(appConfig, products = []) {
         box-shadow: 0 12px 30px rgba(255, 105, 180, 0.25);
         transition: transform 0.2s ease, box-shadow 0.2s ease;
         animation: heroButtonFloat 2.4s ease-in-out infinite;
+        text-decoration: none;
       }
 
-      .hero__cta button:hover {
+      .hero__cta .hero__button:hover {
         animation: none;
         transform: scale(1.08);
         box-shadow: 0 18px 45px rgba(255, 105, 180, 0.35);
       }
 
-      .hero__cta button:active {
+      .hero__cta .hero__button:active {
         animation: none;
         transform: scale(0.94);
       }
 
-      .hero__cta button:focus-visible {
+      .hero__cta .hero__button:focus-visible {
         outline: 3px solid rgba(255, 79, 163, 0.35);
         outline-offset: 4px;
       }
@@ -516,7 +639,11 @@ export function renderLandingPage(appConfig, products = []) {
         background: #FFFFFF;
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
         cursor: pointer;
+        text-decoration: none;
+        color: inherit;
         transition: transform 250ms ease, box-shadow 250ms ease;
+        min-width: 0;
+        overflow: hidden;
       }
 
       .product-card:hover {
@@ -597,9 +724,19 @@ export function renderLandingPage(appConfig, products = []) {
         transform: scale(1.1);
       }
 
+      .favorite-button[aria-pressed="true"] {
+        color: #FF6B9A;
+      }
+
+      .favorite-button[aria-pressed="true"] svg {
+        fill: #FF6B9A;
+        stroke: #FF6B9A;
+      }
+
       .product-copy {
         display: grid;
         gap: 8px;
+        min-width: 0;
       }
 
       .product-copy h3,
@@ -609,9 +746,13 @@ export function renderLandingPage(appConfig, products = []) {
 
       .product-copy h3 {
         color: var(--text);
-        font-size: clamp(16px, 1.6vw, 18px);
+        font-size: clamp(14px, 1.6vw, 18px);
         font-weight: 600;
         line-height: 1.25;
+        overflow-wrap: break-word;
+        word-break: break-word;
+        hyphens: auto;
+        min-width: 0;
       }
 
       .product-copy p {
@@ -650,7 +791,7 @@ export function renderLandingPage(appConfig, products = []) {
         display: block;
         overflow: hidden;
         border-radius: 24px;
-        background: #FFFFFF;
+        background: #f0efed;
         box-shadow: var(--shadow-default);
         transition: transform 250ms ease, box-shadow 250ms ease;
       }
@@ -658,6 +799,12 @@ export function renderLandingPage(appConfig, products = []) {
       .image-panel:hover {
         transform: translateY(-4px);
         box-shadow: var(--shadow-hover);
+      }
+
+      .delivery-banner-link {
+        cursor: pointer;
+        display: block;
+        text-decoration: none;
       }
 
       .image-panel img {
@@ -670,7 +817,7 @@ export function renderLandingPage(appConfig, products = []) {
 
       .newsletter {
         display: grid;
-        grid-template-columns: auto minmax(0, 1fr) minmax(320px, 500px);
+        grid-template-columns: auto minmax(0, 1fr) minmax(min(320px, 100%), 500px);
         align-items: center;
         gap: 22px;
         padding: 22px;
@@ -762,12 +909,16 @@ export function renderLandingPage(appConfig, products = []) {
 
       .site-footer {
         width: min(calc(100% - 48px), var(--container));
-        margin: 0 auto;
-        padding: 0 0 28px;
-        color: var(--secondary-text);
-        font-size: 13px;
-        text-align: right;
+        margin: 0 auto; padding: 4px 0 calc(28px + env(safe-area-inset-bottom, 0px));
+        border-top: 1px solid rgba(0,0,0,0.07);
+        color: var(--secondary-text); font-size: 13px; display: flex; align-items: center; justify-content: space-between;
       }
+      .footer-tagline { opacity: 0.3; }
+      .footer-credit {
+        color: inherit; opacity: 0.45; text-decoration: none;
+        font-size: inherit; transition: opacity 180ms;
+      }
+      .footer-credit:hover { opacity: 0.75; }
 
       .sr-only {
         position: absolute;
@@ -789,7 +940,7 @@ export function renderLandingPage(appConfig, products = []) {
           transition-duration: 1ms !important;
         }
 
-        .hero__cta button {
+        .hero__cta .hero__button {
           animation: none;
         }
       }
@@ -812,6 +963,12 @@ export function renderLandingPage(appConfig, products = []) {
         .mobile-only {
           display: inline-flex;
         }
+
+        .nav-actions .language-switcher {
+          display: none;
+        }
+
+
 
         .section-inner,
         .promo-banner,
@@ -849,46 +1006,47 @@ export function renderLandingPage(appConfig, products = []) {
           min-height: 620px;
           margin-top: 0 !important;
           padding-top: 0 !important;
-          background-image: url('/images/hero-mobile.png');
+          background-image: url('/images/hero-mobile.jpg');
+          background-image: image-set(
+            url('/images/hero-mobile.webp') type('image/webp'),
+            url('/images/hero-mobile.jpg') type('image/jpeg')
+          );
           background-size: cover;
-          background-position: center 20%;
+          background-position: center bottom;
           background-repeat: no-repeat;
         }
 
         .hero__cta {
           position: absolute;
-          top: 43%;
+          top: calc(38% - 60px);
           left: 50%;
           transform: translateX(-50%);
         }
 
-        .hero__cta button {
+        .hero__cta .hero__button {
           animation: none;
           transform: none;
+          width: 200px;
+          height: 52px;
+          font-size: 15px;
         }
 
-        .hero__cta button:hover {
+        .hero__cta .hero__button:hover {
           transform: scale(1.08);
         }
       }
 
       @media (max-width: 640px) {
+        .section-inner,
+        .promo-banner,
+        .mini-game,
+        .newsletter-section,
+        .site-footer {
+          width: min(calc(100% - 32px), var(--container));
+        }
+
         .navbar {
           height: 56px;
-        }
-
-        .nav-actions {
-          gap: 4px;
-        }
-
-        .icon-button {
-          width: 34px;
-          height: 34px;
-        }
-
-        .icon-button svg {
-          width: 19px;
-          height: 19px;
         }
 
         .hits-section {
@@ -909,6 +1067,7 @@ export function renderLandingPage(appConfig, products = []) {
           gap: 14px;
           margin-inline: -16px;
           padding-inline: 16px;
+          scroll-padding-inline-start: 16px;
           overflow-x: auto;
           overscroll-behavior-inline: contain;
           scroll-snap-type: inline mandatory;
@@ -938,15 +1097,26 @@ export function renderLandingPage(appConfig, products = []) {
         }
 
         .newsletter {
-          grid-template-columns: 64px 1fr;
-          gap: 14px;
-          padding: 16px;
+          grid-template-columns: 1fr;
+          text-align: center;
+          gap: 12px;
+          padding: 20px 16px;
           border-radius: 20px;
         }
 
         .newsletter-avatar {
-          width: 64px;
-          height: 64px;
+          width: 72px;
+          height: 72px;
+          margin: 0 auto;
+        }
+
+        .newsletter-copy {
+          justify-items: center;
+        }
+
+        .newsletter-form {
+          grid-column: 1 / -1;
+          width: 100%;
         }
       }
 
@@ -964,21 +1134,47 @@ export function renderLandingPage(appConfig, products = []) {
           font-size: 12px;
         }
       }
+
+      .mobile-nav {
+        display: flex; flex-direction: column;
+        padding: 12px 0; flex: 1;
+      }
+      .mobile-nav a, .mobile-nav button {
+        padding: 16px 24px;
+        font-size: 20px; font-weight: 600;
+        color: var(--text, #111); text-decoration: none;
+        border-bottom: 1px solid rgba(0,0,0,0.05);
+        transition: color 180ms, padding-left 180ms;
+      }
+      .mobile-nav a:hover, .mobile-nav a.active,
+      .mobile-nav button:hover { color: var(--primary, #FF6B9A); padding-left: 32px; }
+      .mobile-nav button {
+        display: flex; align-items: center; gap: 10px;
+        width: 100%; background: none; border: none;
+        font-family: inherit; cursor: pointer; text-align: left;
+      }
+      .mobile-nav button svg { width: 22px; height: 22px; stroke: currentColor; flex-shrink: 0; }
+      .mobile-nav-footer { padding: 24px; flex-shrink: 0; display: flex; flex-direction: column; gap: 16px; }
+      .mobile-nav-lang { display: flex; justify-content: center; }
     </style>
   </head>
   <body>
     <div class="page">
       <main>
-        ${Navbar()}
+        ${PageNavbar()}
         ${Hero()}
         ${HitsSection()}
         ${PromoBanner()}
         ${MiniGame()}
         ${Newsletter()}
       </main>
-      <footer class="site-footer">stay chill</footer>
+    <footer class="site-footer">
+      <span>© ${new Date().getFullYear()} ${appConfig.domain}</span>
+      <span class="footer-tagline">stay chill</span>
+      <a href="https://lab.furai.space" class="footer-credit" target="_blank" rel="noopener noreferrer">BUILT BY FURAI LAB</a>
+    </footer>
       <p class="sr-only">
-        Главная страница ${appConfig.domain} с hero, хитами, промо-баннером, мини-игрой и подпиской.
+        ${appConfig.domain} homepage with a hero, hits, promo banner, mini game and newsletter.
       </p>
     </div>
   </body>
