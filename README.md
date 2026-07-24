@@ -2,7 +2,7 @@
 
 > Storefront and admin backend for **[kokoc.store](https://kokoc.store)** — Crocs,
 > Jibbitz charms, and Adidas Originals sourced from Vietnam, delivered across Russia.
-> Built by [FURAI lab](https://github.com/FURAI-LAB).
+> Built by [FURAI LAB](https://github.com/FURAI-LAB).
 
 A single Cloudflare Worker: server-rendered HTML, a JSON API, an admin panel, and a
 match-3 minigame with server-authoritative scoring — all running at the edge on D1,
@@ -181,4 +181,4 @@ Requires `wrangler.toml` bindings for D1, KV, and R2.
 
 ---
 
-Built by [FURAI lab](https://github.com/FURAI-LAB) — edge-native systems and digital autonomy.
+Built by [FURAI LAB](https://github.com/FURAI-LAB) — edge-native systems and digital autonomy.
