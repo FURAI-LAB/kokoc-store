@@ -1,161 +1,184 @@
-# kokoc-worker
+# Kokoc Store
 
-The storefront and admin backend for **[Kokoc Store](https://kokoc.store)** —
-an e-commerce site selling Crocs, Jibbitz charms, and Adidas Originals sourced
-from Vietnam, with delivery across Russia.
+> Storefront and admin backend for **[kokoc.store](https://kokoc.store)** — Crocs,
+> Jibbitz charms, and Adidas Originals sourced from Vietnam, delivered across Russia.
+> Built by [FURAI lab](https://github.com/FURAI-LAB).
 
-Built as a single Cloudflare Worker: server-rendered HTML pages, a JSON API,
-an admin panel, and a small anti-cheat minigame, all running on Cloudflare's
-edge with D1, KV, and R2 for storage.
+A single Cloudflare Worker: server-rendered HTML, a JSON API, an admin panel, and a
+match-3 minigame with server-authoritative scoring — all running at the edge on D1,
+KV, and R2. No frontend framework, no build step.
 
 ---
 
 ## Stack
 
-- **Runtime:** [Cloudflare Workers](https://developers.cloudflare.com/workers/)
-- **Database:** [D1](https://developers.cloudflare.com/d1/) (SQLite at the edge)
-- **Key-value storage:** [Workers KV](https://developers.cloudflare.com/kv/) — rate limiting, session/promo lookups
-- **Object storage:** [R2](https://developers.cloudflare.com/r2/) — product images
-- **Static assets:** Workers Static Assets (served from `public/`)
-- **Rendering:** hand-written server-side HTML templates (no frontend framework — pages are template strings, styled inline, with vanilla JS for interactivity)
-- **Testing:** [Vitest](https://vitest.dev/) with [`@cloudflare/vitest-pool-workers`](https://developers.cloudflare.com/workers/testing/vitest-integration/) (runs against real Workers runtime + D1 migrations)
-- **Languages:** Russian and English (`ru` / `en`), locale-aware routing and content
+| Layer | Choice |
+|---|---|
+| Runtime | Cloudflare Workers |
+| Database | D1 (SQLite at the edge) |
+| Key-value | Workers KV — rate limiting, settings, promo lookups |
+| Objects | R2 — product images |
+| Static assets | Workers Static Assets (`public/`) |
+| Rendering | Server-side template strings, inline CSS, vanilla JS |
+| Tests | Vitest + `@cloudflare/vitest-pool-workers` (real Workers runtime + D1) |
+| Languages | Russian / English, locale-aware routing |
 
-No frontend build step, no bundler config beyond what Wrangler provides —
-the Worker is the whole application.
+## Routes
 
-## Project structure
+**Storefront**
 
-```
-kokoc-worker/
-├── src/
-│   ├── index.js               # Worker entrypoint (fetch + scheduled handlers)
-│   ├── server.js              # Top-level request router
-│   ├── config/
-│   │   └── app.js             # App-wide config (site name, contacts, etc.)
-│   ├── pages/                 # Server-rendered HTML pages
-│   │   ├── landing.js
-│   │   ├── catalog.js
-│   │   ├── crocs.js
-│   │   ├── adidas.js
-│   │   ├── product.js
-│   │   ├── collabs.js / collabs-detail.js
-│   │   ├── about.js
-│   │   ├── delivery.js
-│   │   ├── minigame.js        # "Собери Jibbitz" match-3 minigame page
-│   │   ├── not-found.js
-│   │   └── admin/             # Admin panel shell + client-side admin UI
-│   ├── routes/
-│   │   ├── api/               # Public JSON API (cart, orders, minigame, subscribe)
-│   │   └── admin/             # Admin JSON API (products, orders, reviews, settings…)
-│   └── lib/                   # Shared logic: catalog, i18n, SEO, security,
-│                              # rate limiting, minigame engine, email, etc.
-├── db/
-│   └── migrations/            # D1 schema migrations, applied in order
-├── public/                    # Static assets (images, icons, minigame art)
-├── test/                      # Vitest test suite
-├── wrangler.toml              # Cloudflare Worker + bindings config
-└── package.json
-```
-
-## Getting started
-
-**Prerequisites:** Node.js, npm, a Cloudflare account with access to this
-Worker's D1 database, KV namespace, and R2 bucket (bindings are already
-configured in `wrangler.toml`; you'll need `wrangler login` and account
-access to run against real resources).
-
-```bash
-npm install
-
-# Run the worker locally (Wrangler dev server, uses local D1/KV/R2 emulation
-# unless configured otherwise)
-npm run dev
-
-# Sanity-check that the worker imports cleanly (fast, no server spin-up)
-npm run check
-
-# Run the test suite (spins up a real Workers runtime + applies D1 migrations)
-npm test
-npm run test:watch
-
-# Deploy to production (kokoc.store / www.kokoc.store)
-npm run deploy
-```
-
-## Routing overview
-
-The Worker handles everything: page rendering, the public API, and the admin
-panel, all dispatched from `src/server.js`.
-
-**Pages** (server-rendered HTML)
-
-| Path | Page |
+| Path | Description |
 |---|---|
 | `/` | Landing page |
-| `/catalog` | Full catalog |
-| `/crocs` | Crocs category |
-| `/adidas` | Adidas Originals category |
-| `/product/:slug` | Product detail page |
-| `/collabs`, `/collabs/:slug` | Collab drops |
-| `/about` | About |
-| `/delivery` | Delivery info |
-| `/minigame` | "Собери Jibbitz" minigame |
-| `/robots.txt`, `/sitemap.xml` | SEO |
+| `/catalog` | All products, with sort / tag / search / brand filters |
+| `/crocs` | Crocs landing page — own H1, copy, FAQ, size chart |
+| `/adidas` | Adidas Originals landing page |
+| `/product/:slug` | Product detail with variants, images, reviews |
+| `/collabs`, `/collabs/:slug` | Collaboration pages |
+| `/delivery`, `/about` | Static content |
+| `/minigame` | "Собери Jibbitz" match-3, earns a promo code |
+| `/robots.txt`, `/sitemap.xml` | Generated from live catalog data |
+| `/r2/*`, `/cdn/*` | Image proxy in front of R2 |
 
-**Public API** (`/api/*`, JSON)
+**Public API**
 
-| Path | Purpose |
-|---|---|
-| `/api/health` | Health check |
-| `/api/catalog/products` | Product listing |
-| `/api/cart`, `/api/cart/items`, `/api/cart/items/:id` | Cart CRUD |
-| `/api/orders` | Order submission |
-| `/api/subscribe` | Newsletter signup |
-| `/api/minigame/start`, `/finish`, `/status` | Minigame session lifecycle |
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/health` | Service status and binding availability |
+| `GET` | `/api/catalog/products` | Paginated catalog |
+| `GET` | `/api/catalog/products/:slug` | Product detail (quick-view) |
+| `GET/POST` | `/api/cart`, `/api/cart/items`, `/api/cart/items/:id` | Cart operations |
+| `POST` | `/api/orders` | Create an order (validated against D1) |
+| `GET/POST` | `/api/products/:slug/reviews` | Read approved reviews, submit new ones |
+| `POST` | `/api/subscribe` | Newsletter signup |
+| `POST` | `/api/minigame/start`, `/api/minigame/finish` | Game session, server-side replay |
+| `GET` | `/api/minigame/status` | Whether this device already earned a code |
 
-**Admin** (`/admin/*`, cookie-authenticated)
+**Admin** — everything under `/admin/*` sits behind a signed session cookie.
+`/admin/api/*` covers products, variants, images, orders, reviews, collabs,
+clients, subscribers, categories, brands, discounts, settings, and stats.
 
-Server-rendered shell + a JSON API under `/admin/api/*` covering products,
-variants, product images (R2-backed), orders, reviews, collabs, categories,
-brands, discounts, site settings, and subscriber/client lists.
+## Structure
 
-## Database
-
-Schema lives in `db/migrations/`, applied in numeric order. Core tables:
-`products`, `product_variants`, `product_images`, `carts`, `cart_items`,
-`orders`, `order_items`, `subscribers`, `product_reviews`, plus
-`minigame_sessions` and `promo_codes` for the minigame's server-side
-anti-cheat and promo issuance.
-
-## The minigame
-
-`/minigame` is a match-3 game ("Собери Jibbitz") that rewards players who
-hit a score threshold with a one-per-device promo code (500 ₽ off Crocs).
-To prevent client-side score manipulation, move validation and scoring are
-replayed server-side against a seeded PRNG — the client only ever proposes
-moves; the server is the source of truth for the final score. See
-`src/lib/minigame-engine.js` and `src/routes/api/minigame.js`.
+```
+src/
+  index.js                    Worker entrypoint (fetch + scheduled)
+  server.js                   Top-level router
+  config/
+    app.js                    Site name, domain, contacts
+    brand-pages.js            Per-brand config for /crocs and /adidas
+  lib/
+    catalog.js                Catalog and product-detail queries
+    collabs.js                Collaboration data
+    cookies.js                Cookie parsing, session cookie
+    csrf.js                   Same-origin guard for mutating requests
+    html.js                   HTML escaping (server + client)
+    i18n.js                   ru/en translations, locale detection
+    ids.js                    Random IDs and promo codes
+    markdown.js               Markdown rendering
+    minigame-engine.js        Deterministic match-3 replay
+    navbar.js                 Shared navigation
+    products.js               Product queries
+    ratelimit.js              KV sliding-window limiter
+    response.js               Response helpers
+    reviews.js                Reviews and rating aggregates
+    rich-text.js              Sanitised rich-text descriptions
+    security.js               CSP nonces and security headers
+    seo.js                    Meta tags, JSON-LD
+    sitemap.js                sitemap.xml generation
+    uploads.js                Upload allow-list, R2 key sanitising
+  pages/                      Server-rendered HTML
+    brand-catalog.js          Shared implementation for /crocs and /adidas
+    crocs.js, adidas.js       Thin wrappers over brand-catalog
+    catalog.js, product.js, landing.js, collabs.js, minigame.js, ...
+    admin/                    Admin shell and per-section client modules
+  routes/
+    api/                      Public API
+    admin/                    Admin API and auth
+db/migrations/                D1 schema (0001-0010)
+test/                         423 tests
+docs/architecture-v1.md
+public/                       Static assets
+```
 
 ## Security
 
-- Per-request CSP nonce, enforced via `script-src 'self' 'nonce-...'` (no
-  `unsafe-inline`) — see `src/lib/security.js`
-- Standard security headers (HSTS, etc.) applied to every response
-- KV-backed sliding-window rate limiting on sensitive endpoints —
-  see `src/lib/ratelimit.js`
-- Cookie-based admin authentication (`src/routes/admin/auth.js`)
+Every response carries security headers; storefront pages get a fresh CSP nonce
+per request, so only the inline script block the server deliberately emits can run.
 
-## Internationalization
+| Header | Value |
+|---|---|
+| `Content-Security-Policy` | `default-src 'self'`, per-request `nonce-…` for scripts |
+| `Permissions-Policy` | camera, microphone, payment, usb disabled |
+| `Strict-Transport-Security` | `max-age=31536000` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `DENY` |
 
-Content is available in Russian (`ru`, default) and English (`en`). Locale
-is resolved from the `?lang=` query param, a locale cookie, or falls back to
-the default — see `src/lib/i18n.js`.
+Beyond headers:
 
-## Deployment
+- **Admin auth** — HMAC-signed session cookie, constant-time password comparison,
+  rate-limited login.
+- **SQL** — every query is parameterised; sort order comes from a whitelist map,
+  never from user input.
+- **CSRF** — same-origin check on all mutating `/api/*` requests.
+- **Uploads** — file extension *and* content-type come from a fixed allow-list, never
+  from the uploader's `file.type`. SVG is rejected (it can carry inline script).
+- **Orders** — prices are re-checked against D1, so a client cannot forge a cheap order.
+- **Minigame** — the server replays the submitted moves against its own seed; the
+  client's on-screen score is cosmetic.
 
-Deployment is via Wrangler (`npm run deploy`), targeting the custom domains
-`kokoc.store` and `www.kokoc.store`. A daily cron trigger (`0 3 * * *`)
-cleans up expired open carts. Static assets are uploaded from `public/` and
-diffed against what's already live, so only changed files are pushed on
-each deploy.
+## Local development
+
+```bash
+npm install
+npm run dev          # wrangler dev on http://localhost:8787
+```
+
+Create `.dev.vars` for local secrets (git-ignored):
+
+```
+ADMIN_PASSWORD=<anything, local only>
+ADMIN_SECRET=<random 32+ chars>
+```
+
+Apply migrations to the local D1 before first run:
+
+```bash
+for f in db/migrations/*.sql; do
+  npx wrangler d1 execute kokoc-store --local --file "$f"
+done
+```
+
+Production secrets go through `wrangler secret put` and never live in files.
+
+## Tests
+
+```bash
+npm test             # 423 tests
+npm run test:watch
+```
+
+Tests run against the real Workers runtime with D1 migrations applied, so they
+exercise actual SQL rather than mocks. They also run on every push and pull
+request via GitHub Actions.
+
+Two suites exist specifically to stop known bugs from returning:
+
+- `xss-regression.test.js` — product and cart data must stay escaped at every
+  `innerHTML` call site.
+- `security-regression.test.js` — cart quantity validation, upload allow-list, R2
+  key sanitising, CSRF coverage, and helper deduplication.
+
+## Deploy
+
+```bash
+npm run deploy       # wrangler deploy
+npx wrangler rollback
+```
+
+Requires `wrangler.toml` bindings for D1, KV, and R2.
+
+---
+
+Built by [FURAI lab](https://github.com/FURAI-LAB) — edge-native systems and digital autonomy.
